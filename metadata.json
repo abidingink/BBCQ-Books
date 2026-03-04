@@ -1,0 +1,5 @@
+{
+  "name": "Berean Bible Church Library",
+  "description": "A webapp for managing the physical book library at Berean Bible Church Queensland.",
+  "requestFramePermissions": ["camera"]
+}
