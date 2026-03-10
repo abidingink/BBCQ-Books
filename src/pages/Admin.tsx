@@ -251,9 +251,15 @@ export default function Admin() {
     try {
       const res = await fetch(`/api/admin/analytics?days=${days}`);
       const data = await res.json();
-      setAnalytics(data);
+      if (data && data.stats) {
+        setAnalytics(data);
+      } else {
+        console.error("Expected analytics data, got:", data);
+        setAnalytics(null);
+      }
     } catch (err) {
       console.error('Failed to fetch analytics', err);
+      setAnalytics(null);
     }
   };
 
@@ -267,9 +273,15 @@ export default function Admin() {
     try {
       const res = await fetch('/api/messages');
       const data = await res.json();
-      setMessages(data);
+      if (Array.isArray(data)) {
+        setMessages(data);
+      } else {
+        console.error("Expected array of messages, got:", data);
+        setMessages([]);
+      }
     } catch (err) {
       console.error('Failed to fetch messages', err);
+      setMessages([]);
     }
   };
 
@@ -277,9 +289,15 @@ export default function Admin() {
     try {
       const res = await fetch('/api/members/all');
       const data = await res.json();
-      setMembers(data);
+      if (Array.isArray(data)) {
+        setMembers(data);
+      } else {
+        console.error("Expected array of members, got:", data);
+        setMembers([]);
+      }
     } catch (err) {
       console.error('Failed to fetch members', err);
+      setMembers([]);
     }
   };
 
@@ -287,20 +305,27 @@ export default function Admin() {
     try {
       const res = await fetch('/api/settings');
       const data = await res.json();
-      setSettings(data.settings);
-      setGoogleConnected(data.googleConnected);
-      setRefreshToken(data.refreshToken);
+      
+      if (data && Array.isArray(data.settings)) {
+        setSettings(data.settings);
+        setGoogleConnected(data.googleConnected);
+        setRefreshToken(data.refreshToken);
 
-      // Check last backup date
-      const lastBackup = data.settings.find((s: any) => s.key === 'last_drive_backup')?.value;
-      if (!lastBackup) {
-        setShowBackupWarning(true);
+        // Check last backup date
+        const lastBackup = data.settings.find((s: any) => s.key === 'last_drive_backup')?.value;
+        if (!lastBackup) {
+          setShowBackupWarning(true);
+        } else {
+          const daysSinceBackup = (new Date().getTime() - new Date(lastBackup).getTime()) / (1000 * 3600 * 24);
+          setShowBackupWarning(daysSinceBackup > 30);
+        }
       } else {
-        const daysSinceBackup = (new Date().getTime() - new Date(lastBackup).getTime()) / (1000 * 3600 * 24);
-        setShowBackupWarning(daysSinceBackup > 30);
+        console.error("Expected settings array, got:", data);
+        setSettings([]);
       }
     } catch (err) {
       console.error('Failed to fetch settings', err);
+      setSettings([]);
     }
   };
 
@@ -316,9 +341,8 @@ export default function Admin() {
 
   const handleConnectGoogle = async () => {
     try {
-      const res = await fetch('/api/auth/google/url');
-      const { url } = await res.json();
-      window.open(url, 'google_oauth', 'width=600,height=700');
+      window.dispatchEvent(new CustomEvent('force_drive_sync'));
+      setTimeout(() => fetchSettings(), 3000);
     } catch (err) {
       alert('Failed to start Google connection');
     }
@@ -327,7 +351,11 @@ export default function Admin() {
   const handleDisconnectGoogle = async () => {
     if (!confirm('Are you sure you want to disconnect your Google Account? This will stop automated backups and directory syncing.')) return;
     try {
-      const res = await fetch('/api/admin/google/disconnect', { method: 'POST' });
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: [{ key: 'google_oauth_tokens', value: '' }] })
+      });
       if (res.ok) {
         alert('Google Account disconnected successfully.');
         await fetchSettings();
@@ -336,23 +364,6 @@ export default function Admin() {
       }
     } catch (err) {
       alert('Failed to disconnect Google Account.');
-    }
-  };
-
-  const handleSyncDirectory = async () => {
-    setSyncing(true);
-    try {
-      const res = await fetch('/api/members/sync', { method: 'POST' });
-      if (res.ok) {
-        alert('Directory synced successfully!');
-        fetchMembers();
-      } else {
-        alert('Failed to sync directory. Ensure Google Account is connected.');
-      }
-    } catch (err) {
-      alert('An error occurred during sync');
-    } finally {
-      setSyncing(false);
     }
   };
 
@@ -401,9 +412,15 @@ export default function Admin() {
     try {
       const res = await fetch('/api/books');
       const data = await res.json();
-      setBooks(data);
+      if (Array.isArray(data)) {
+        setBooks(data);
+      } else {
+        console.error("Expected array of books, got:", data);
+        setBooks([]);
+      }
     } catch (err) {
       console.error('Failed to fetch books', err);
+      setBooks([]);
     }
   };
 
@@ -427,9 +444,15 @@ export default function Admin() {
     try {
       const res = await fetch('/api/loans');
       const data = await res.json();
-      setLoans(data);
+      if (Array.isArray(data)) {
+        setLoans(data);
+      } else {
+        console.error("Expected array of loans, got:", data);
+        setLoans([]);
+      }
     } catch (err) {
       console.error('Failed to fetch loans', err);
+      setLoans([]);
     }
   };
 
@@ -504,43 +527,59 @@ export default function Admin() {
     setAddMessage({ type: 'info', text: 'Searching for book details...' });
 
     try {
-      const res = await fetch(`/api/fetch-book/${clean}`);
+      const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${clean}`);
       
       if (res.ok) {
         const data = await res.json();
+        const item = data.items?.[0]?.volumeInfo;
         
-        // Update UI with API data immediately
-        const mergedData = {
-          ...data,
-          title: data.title || fallbackData?.title || '',
-          author: data.author || fallbackData?.author || '',
-          description: data.description || fallbackData?.description || '',
-          cover_url: data.cover_url || fallbackData?.cover_url || '',
-          category: data.category || fallbackData?.category || '',
-        };
-        
-        setTitle(mergedData.title);
-        setAuthor(mergedData.author);
-        setDescription(mergedData.description);
-        setCoverUrl(mergedData.cover_url);
-        setCategory(mergedData.category);
-        
-        setAddMessage({ type: 'info', text: 'Fetching additional details with AI...' });
-        
-        // Augment with AI only if data is missing
-        const augmentedData = await augmentBookDataWithAI(clean, mergedData);
-        
-        // Update UI with AI data, using a functional update to maintain previous state if AI returns nothing
-        setTitle(prev => augmentedData.title || prev);
-        setAuthor(prev => augmentedData.author || prev);
-        setDescription(prev => augmentedData.description || prev);
-        setCoverUrl(prev => augmentedData.cover_url || prev);
-        setCategory(prev => augmentedData.category || prev);
-        
-        lastSuccessfulIsbn.current = clean;
-        setAddMessage({ type: 'success', text: 'Book details found!' });
+        if (item) {
+          const bookData = {
+            title: item.title || '',
+            author: item.authors?.join(', ') || '',
+            description: item.description || '',
+            cover_url: item.imageLinks?.thumbnail?.replace('http:', 'https:') || '',
+            category: item.categories?.join(', ') || ''
+          };
+
+          // Update UI with API data immediately
+          const mergedData = {
+            ...bookData,
+            title: bookData.title || fallbackData?.title || '',
+            author: bookData.author || fallbackData?.author || '',
+            description: bookData.description || fallbackData?.description || '',
+            cover_url: bookData.cover_url || fallbackData?.cover_url || '',
+            category: bookData.category || fallbackData?.category || '',
+          };
+          
+          setTitle(mergedData.title);
+          setAuthor(mergedData.author);
+          setDescription(mergedData.description);
+          setCoverUrl(mergedData.cover_url);
+          setCategory(mergedData.category);
+          
+          setAddMessage({ type: 'info', text: 'Fetching additional details with AI...' });
+          
+          // Augment with AI only if data is missing
+          const augmentedData = await augmentBookDataWithAI(clean, mergedData);
+          
+          // Update UI with AI data, using a functional update to maintain previous state if AI returns nothing
+          setTitle(prev => augmentedData.title || prev);
+          setAuthor(prev => augmentedData.author || prev);
+          setDescription(prev => augmentedData.description || prev);
+          setCoverUrl(prev => augmentedData.cover_url || prev);
+          setCategory(prev => augmentedData.category || prev);
+          
+          lastSuccessfulIsbn.current = clean;
+          setAddMessage({ type: 'success', text: 'Book details found!' });
+        } else {
+          throw new Error('Not found');
+        }
       } else {
-        if (fallbackData && (fallbackData.title || fallbackData.author)) {
+        throw new Error('API Error');
+      }
+    } catch (err) {
+      if (fallbackData && (fallbackData.title || fallbackData.author)) {
           setTitle(fallbackData.title || '');
           setAuthor(fallbackData.author || '');
           setDescription(fallbackData.description || '');
@@ -558,11 +597,6 @@ export default function Admin() {
              setCoverUrl('');
           }
         }
-      }
-
-    } catch (err) {
-      console.error('Error fetching book details', err);
-      setAddMessage({ type: 'error', text: 'Network error while fetching book details.' });
     } finally {
       setIsSearching(false);
     }
@@ -1494,23 +1528,16 @@ export default function Admin() {
             <div className="mb-8 p-6 bg-slate-50 rounded-2xl border border-slate-100">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h4 className="font-bold text-slate-900 mb-1">Google Sheets Connection</h4>
+                  <h4 className="font-bold text-slate-900 mb-1">Google Drive Sync</h4>
                   <p className="text-sm text-slate-500">
                     {googleConnected 
                       ? "Connected to your Google Account." 
-                      : "Connect your account to allow the app to write to your Google Sheet."}
+                      : "Connect your account to sync your library database to Google Drive."}
                   </p>
+                  <p className="text-xs text-slate-400 mt-1">Note: You must set your <strong>google_client_id</strong> below first.</p>
                 </div>
                 {googleConnected ? (
                   <div className="flex items-center gap-4">
-                    <button 
-                      onClick={handleSyncDirectory}
-                      disabled={syncing}
-                      className="flex items-center gap-2 bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl text-sm font-bold hover:bg-emerald-100 transition-colors shadow-sm disabled:opacity-50"
-                    >
-                      {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-                      Sync Directory
-                    </button>
                     <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full text-xs font-bold">
                       <Check className="w-4 h-4" />
                       Connected

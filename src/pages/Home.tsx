@@ -38,11 +38,17 @@ export default function Home() {
     fetch('/api/books')
       .then(res => res.json())
       .then(data => {
-        setBooks(data);
+        if (Array.isArray(data)) {
+          setBooks(data);
+        } else {
+          console.error("Expected array of books, got:", data);
+          setBooks([]);
+        }
         setLoading(false);
       })
       .catch(err => {
         console.error(err);
+        setBooks([]);
         setLoading(false);
       });
   };

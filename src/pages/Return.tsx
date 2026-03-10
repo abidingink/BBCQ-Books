@@ -39,10 +39,18 @@ export default function Return() {
       const res = await fetch(`/api/loans/active?q=${encodeURIComponent(searchQuery)}`);
       if (res.ok) {
         const data = await res.json();
-        setActiveLoans(data);
+        if (Array.isArray(data)) {
+          setActiveLoans(data);
+        } else {
+          console.error("Expected array of active loans, got:", data);
+          setActiveLoans([]);
+        }
+      } else {
+        setActiveLoans([]);
       }
     } catch (err) {
       console.error('Search failed', err);
+      setActiveLoans([]);
     } finally {
       setSearchingLoans(false);
     }

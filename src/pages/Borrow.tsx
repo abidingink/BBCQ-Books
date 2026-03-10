@@ -42,12 +42,21 @@ export default function Borrow() {
         fetch(`/api/members?q=${encodeURIComponent(name)}`)
           .then(res => res.json())
           .then(data => {
-            setSuggestions(data);
-            if (isNameFocused) {
-              setShowSuggestions(data.length > 0);
+            if (Array.isArray(data)) {
+              setSuggestions(data);
+              if (isNameFocused) {
+                setShowSuggestions(data.length > 0);
+              }
+            } else {
+              setSuggestions([]);
+              setShowSuggestions(false);
             }
           })
-          .catch(console.error);
+          .catch(err => {
+            console.error(err);
+            setSuggestions([]);
+            setShowSuggestions(false);
+          });
       }, 300);
       return () => clearTimeout(timer);
     } else {

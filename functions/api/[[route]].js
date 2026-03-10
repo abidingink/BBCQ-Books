@@ -9,11 +9,35 @@ export async function onRequest(context) {
     });
   }
 
-  // Construct the target URL by appending the path and search params to the backend URL
-  const targetUrl = new URL(url.pathname + url.search, backendUrl);
+  let targetUrl;
+  try {
+    targetUrl = new URL(url.pathname + url.search, backendUrl);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: "Invalid BACKEND_URL configuration: " + err.message }), { 
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  // Clone headers and remove Host
+  const headers = new Headers(context.request.headers);
+  headers.delete('Host');
   
   // Create a new request based on the original one
-  const request = new Request(targetUrl, context.request);
+  const requestInit = {
+    method: context.request.method,
+    headers: headers,
+    redirect: 'manual'
+  };
+  
+  // Only add body if it's a method that allows a body
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(context.request.method)) {
+    requestInit.body = context.request.body;
+    // Required for streaming bodies in Cloudflare Workers
+    requestInit.duplex = 'half';
+  }
+  
+  const request = new Request(targetUrl, requestInit);
   
   // Fetch from the backend and return the response
   return fetch(request);
