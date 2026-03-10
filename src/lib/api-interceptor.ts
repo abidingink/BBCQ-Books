@@ -275,7 +275,7 @@ Object.defineProperty(window, 'fetch', {
     // --- Admin Login ---
     if (path === '/api/admin/login' && method === 'POST') {
       const body = JSON.parse(init?.body as string);
-      const adminPassword = db.getSetting('admin_password') || 'admin123';
+      const adminPassword = db.getSetting('ADMIN_PASSWORD') || process.env.ADMIN_PASSWORD || 'bbcqbooks';
       if (body.password === adminPassword) {
         return jsonResponse({ success: true });
       }

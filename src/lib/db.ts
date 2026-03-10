@@ -53,7 +53,7 @@ const defaultSettings: Setting[] = [
   { key: 'sms_confirmation_template', value: "Hi {name}, you've borrowed '{title}'. Due on {due_date}." },
   { key: 'sms_return_template', value: "Hi {name}, thanks for returning '{title}'." },
   { key: 'sms_overdue_template', value: "Hi {name}, '{title}' is overdue. Please return it ASAP." },
-  { key: 'admin_password', value: "admin123" },
+  { key: 'ADMIN_PASSWORD', value: "bbcqbooks" },
   { key: 'max_borrow_weeks', value: "4" },
   { key: 'google_client_id', value: "" }
 ];
