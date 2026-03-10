@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Scanner from '../components/Scanner';
-import { ScanLine, Trash2, CheckCircle2, Search, User, Hash } from 'lucide-react';
+import CoverScanner from '../components/CoverScanner';
+import { ScanLine, Trash2, CheckCircle2, Search, User, PlusCircle, X } from 'lucide-react';
 
 interface ScannedBook {
   isbn: string;
@@ -12,11 +13,12 @@ interface ScannedBook {
 export default function Return() {
   const [scanning, setScanning] = useState(false);
   const [scannedBooks, setScannedBooks] = useState<ScannedBook[]>([]);
+  const [suggestedBooks, setSuggestedBooks] = useState<ScannedBook[]>([]);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
   const [manualIsbn, setManualIsbn] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => localStorage.getItem('library_user_name') || '');
   const [activeLoans, setActiveLoans] = useState<any[]>([]);
   const [searchingLoans, setSearchingLoans] = useState(false);
 
@@ -58,6 +60,30 @@ export default function Return() {
       if (res.ok) {
         const book = await res.json();
         setScannedBooks(prev => [...prev, book]);
+        
+        // Remove from suggested if it was there
+        setSuggestedBooks(prev => prev.filter(b => b.isbn !== isbn));
+
+        // Fetch suggestions
+        const sugRes = await fetch(`/api/loans/suggestions/${isbn}`);
+        if (sugRes.ok) {
+          const suggestions = await sugRes.json();
+          setSuggestedBooks(prev => {
+            const newSuggestions = [...prev];
+            for (const sug of suggestions) {
+              if (!scannedBooks.some(b => b.isbn === sug.isbn) && 
+                  !newSuggestions.some(b => b.isbn === sug.isbn) &&
+                  sug.isbn !== isbn) {
+                newSuggestions.push({
+                  isbn: sug.isbn,
+                  title: sug.title,
+                  author: sug.author
+                });
+              }
+            }
+            return newSuggestions;
+          });
+        }
       } else {
         setError(`Book with ISBN ${isbn} not found in library.`);
       }
@@ -70,6 +96,11 @@ export default function Return() {
 
   const removeBook = (isbn: string) => {
     setScannedBooks(prev => prev.filter(b => b.isbn !== isbn));
+  };
+
+  const addSuggestedBook = (book: ScannedBook) => {
+    setScannedBooks(prev => [...prev, book]);
+    setSuggestedBooks(prev => prev.filter(b => b.isbn !== book.isbn));
   };
 
   const handleReturn = async () => {
@@ -92,6 +123,7 @@ export default function Return() {
       if (res.ok) {
         setSuccess(true);
         setScannedBooks([]);
+        setSuggestedBooks([]);
       } else {
         setError(data.error || 'Failed to return books.');
       }
@@ -135,7 +167,7 @@ export default function Return() {
         <p className="text-slate-500 text-sm">Scan barcodes or search for active loans</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="space-y-4">
         <div className="relative">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <Search className="h-5 w-5 text-slate-400" />
@@ -145,23 +177,33 @@ export default function Return() {
             placeholder="Search borrower or book..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#1a202c] bg-white transition-all shadow-sm"
+            className="block w-full pl-10 pr-10 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#1a202c] bg-white transition-all shadow-sm"
           />
-          {searchingLoans && (
-            <div className="absolute right-3 top-3.5">
+          <div className="absolute inset-y-0 right-0 pr-3 flex items-center gap-2">
+            {searchingLoans && (
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-400"></div>
-            </div>
-          )}
+            )}
+            {searchQuery && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setActiveLoans([]);
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
+          </div>
           
-          {activeLoans.length > 0 && (
+          {activeLoans.filter(loan => !scannedBooks.some(b => b.isbn === loan.isbn)).length > 0 && (
             <div className="absolute z-20 w-full mt-2 bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden max-h-60 overflow-y-auto">
-              {activeLoans.map((loan) => (
+              {activeLoans.filter(loan => !scannedBooks.some(b => b.isbn === loan.isbn)).map((loan) => (
                 <button
                   key={loan.id}
                   onClick={() => {
                     handleScan(loan.isbn);
-                    setSearchQuery('');
-                    setActiveLoans([]);
+                    // We don't clear searchQuery so they can easily return multiple books
                   }}
                   className="w-full px-4 py-3 text-left hover:bg-slate-50 border-b border-slate-50 last:border-0 flex items-center gap-3 transition-colors"
                 >
@@ -177,33 +219,6 @@ export default function Return() {
               ))}
             </div>
           )}
-        </div>
-
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Hash className="h-5 w-5 text-slate-400" />
-            </div>
-            <input
-              type="text"
-              placeholder="Manual ISBN..."
-              value={manualIsbn}
-              onChange={(e) => setManualIsbn(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && manualIsbn && handleScan(manualIsbn)}
-              className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#1a202c] bg-white transition-all shadow-sm"
-            />
-          </div>
-          <button
-            onClick={() => {
-              if (manualIsbn) {
-                handleScan(manualIsbn);
-                setManualIsbn('');
-              }
-            }}
-            className="bg-[#1a202c] text-white px-6 rounded-xl font-bold hover:bg-slate-800 transition-colors shadow-sm"
-          >
-            Add
-          </button>
         </div>
       </div>
 
@@ -225,15 +240,31 @@ export default function Return() {
           <p className="text-center text-white/70 text-sm mt-4">Point camera at ISBN barcode</p>
         </div>
       ) : (
-        <button 
-          onClick={() => setScanning(true)}
-          className="w-full bg-white border-2 border-dashed border-slate-300 text-slate-600 py-12 rounded-3xl hover:border-[#1a202c] hover:text-[#1a202c] transition-colors flex flex-col items-center justify-center gap-3 group"
-        >
-          <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center group-hover:bg-slate-100 transition-colors">
-            <ScanLine className="w-8 h-8" />
-          </div>
-          <span className="font-medium text-lg">Tap to Scan Barcode</span>
-        </button>
+        <div className="grid grid-cols-2 gap-4">
+          <button 
+            onClick={() => setScanning(true)}
+            className="w-full bg-white border-2 border-dashed border-slate-300 text-slate-600 py-6 rounded-2xl hover:border-[#1a202c] hover:text-[#1a202c] transition-colors flex flex-col items-center justify-center gap-2 group"
+          >
+            <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center group-hover:bg-slate-100 transition-colors">
+              <ScanLine className="w-6 h-6" />
+            </div>
+            <span className="font-medium text-sm">Scan Barcode</span>
+          </button>
+          
+          <CoverScanner 
+            mode="match"
+            variant="large"
+            onResult={(result) => {
+              if (result.match && result.book) {
+                handleScan(result.book.isbn);
+              } else {
+                setError('Could not identify book from cover. Try scanning barcode or searching manually.');
+              }
+            }}
+            onError={(err) => setError(err)}
+            className="h-full"
+          />
+        </div>
       )}
 
       {scannedBooks.length > 0 && (
@@ -258,6 +289,34 @@ export default function Return() {
               </li>
             ))}
           </ul>
+
+          {suggestedBooks.length > 0 && (
+            <div className="border-t border-slate-100 bg-blue-50/50 p-4">
+              <div className="mb-3">
+                <h4 className="font-bold text-blue-900 text-sm">Also borrowed by this user</h4>
+                <p className="text-xs text-blue-700 mt-1">
+                  These books are <strong>not</strong> selected for return yet. Tap to add them.
+                </p>
+              </div>
+              <ul className="space-y-2">
+                {suggestedBooks.map((book, idx) => (
+                  <li key={idx} className="flex justify-between items-center gap-4 bg-white p-3 rounded-xl border border-blue-100 shadow-sm">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-slate-900 truncate text-sm">{book.title}</p>
+                      <p className="text-xs text-slate-500 truncate">{book.author}</p>
+                    </div>
+                    <button 
+                      onClick={() => addSuggestedBook(book)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg text-xs font-bold transition-colors"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                      Add
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           
           <div className="p-6 bg-slate-50 border-t border-slate-100">
             <button 

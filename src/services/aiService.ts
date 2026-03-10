@@ -4,7 +4,7 @@ let aiClient: GoogleGenAI | null = null;
 
 function getAI(): GoogleGenAI {
   if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY;
+    const key = process.env.API_KEY || process.env.GEMINI_API_KEY;
     if (!key) {
       console.warn('GEMINI_API_KEY is not set. AI features will be disabled.');
     }
@@ -54,15 +54,38 @@ export async function augmentBookDataWithAI(isbn: string, initialData: any) {
     });
 
     if (response.text) {
-      const aiData = JSON.parse(response.text);
-      return {
-        ...initialData,
-        title: initialData.title || aiData.title,
-        author: initialData.author || aiData.author,
-        description: aiData.description || initialData.description,
-        cover_url: initialData.cover_url || aiData.cover_url,
-        category: initialData.category || (aiData.categories ? aiData.categories.join(', ') : null)
-      };
+      if (response.text.includes('Rate exceeded')) {
+        console.warn('Gemini API rate limit exceeded');
+        return initialData;
+      }
+      try {
+        const aiData = JSON.parse(response.text);
+        
+        const toTitleCase = (str: string) => {
+          if (!str) return str;
+          const minorWords = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'if', 'in', 'nor', 'of', 'on', 'or', 'so', 'the', 'to', 'up', 'yet']);
+          return str.replace(
+            /\w\S*/g,
+            (txt, offset) => {
+              if (offset !== 0 && minorWords.has(txt.toLowerCase())) {
+                return txt.toLowerCase();
+              }
+              return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+            }
+          );
+        };
+
+        return {
+          ...initialData,
+          title: toTitleCase(initialData.title || aiData.title),
+          author: toTitleCase(initialData.author || aiData.author),
+          description: aiData.description || initialData.description,
+          cover_url: initialData.cover_url || aiData.cover_url,
+          category: initialData.category || (aiData.categories ? aiData.categories.join(', ') : null)
+        };
+      } catch (e) {
+        console.warn('Failed to parse Gemini response', e);
+      }
     }
   } catch (e) {
     console.warn('AI augmentation failed', e);
@@ -98,8 +121,35 @@ export async function augmentSingleFieldWithAI(field: string, bookData: any) {
     });
 
     if (response.text) {
-      const aiData = JSON.parse(response.text);
-      return aiData[field];
+      if (response.text.includes('Rate exceeded')) {
+        console.warn('Gemini API rate limit exceeded');
+        return null;
+      }
+      try {
+        const aiData = JSON.parse(response.text);
+        let value = aiData[field];
+        
+        if (field === 'title' || field === 'author') {
+          const toTitleCase = (str: string) => {
+            if (!str) return str;
+            const minorWords = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'if', 'in', 'nor', 'of', 'on', 'or', 'so', 'the', 'to', 'up', 'yet']);
+            return str.replace(
+              /\w\S*/g,
+              (txt, offset) => {
+                if (offset !== 0 && minorWords.has(txt.toLowerCase())) {
+                  return txt.toLowerCase();
+                }
+                return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+              }
+            );
+          };
+          value = toTitleCase(value);
+        }
+        
+        return value;
+      } catch (e) {
+        console.warn('Failed to parse Gemini response', e);
+      }
     }
   } catch (e) {
     console.warn('AI field update failed', e);

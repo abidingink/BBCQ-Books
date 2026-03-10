@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Scanner from '../components/Scanner';
+import CoverScanner from '../components/CoverScanner';
 import { motion, AnimatePresence } from 'motion/react';
 import { augmentBookDataWithAI, augmentSingleFieldWithAI } from '../services/aiService';
 import { 
@@ -15,7 +16,8 @@ import {
   Line, 
   PieChart, 
   Pie, 
-  Cell 
+  Cell,
+  ComposedChart
 } from 'recharts';
 import { 
   ScanLine, 
@@ -36,7 +38,8 @@ import {
   ChevronDown,
   Camera,
   RefreshCw,
-  BarChart3
+  BarChart3,
+  PieChart as PieChartIcon
 } from 'lucide-react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { LOGO_URL } from '../constants';
@@ -55,6 +58,8 @@ interface Book {
   status: string;
   category: string | null;
   shelf_number: string | null;
+  featured: boolean;
+  book_code: string | null;
 }
 
 interface Loan {
@@ -64,6 +69,7 @@ interface Loan {
   user_phone: string;
   borrow_date: string;
   due_date: string;
+  original_due_date: string;
   return_date: string | null;
   title: string;
   isbn: string;
@@ -82,9 +88,11 @@ export default function Admin() {
   const [books, setBooks] = useState<Book[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [settings, setSettings] = useState<{ key: string, value: string }[]>([]);
+  const [showReturnedLoans, setShowReturnedLoans] = useState(false);
   const [messages, setMessages] = useState<any[]>([]);
   const [analytics, setAnalytics] = useState<any>(null);
   const [googleConnected, setGoogleConnected] = useState(false);
+  const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -121,6 +129,8 @@ export default function Admin() {
   const [status, setStatus] = useState('available');
   const [category, setCategory] = useState('');
   const [shelfNumber, setShelfNumber] = useState('');
+  const [bookCode, setBookCode] = useState('');
+  const [featured, setFeatured] = useState(false);
   const [addMessage, setAddMessage] = useState({ type: '', text: '' });
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastAddedBook, setLastAddedBook] = useState<{title: string, cover: string} | null>(null);
@@ -145,7 +155,25 @@ export default function Admin() {
   };
 
   const getSortedData = (data: any[], tab: string) => {
-    if (!sortConfig || sortConfig.tab !== tab) return data;
+    if (!sortConfig || sortConfig.tab !== tab) {
+      if (tab === 'loans') {
+        return [...data].sort((a, b) => {
+          const aValue = a.due_date || '';
+          const bValue = b.due_date || '';
+          return aValue < bValue ? -1 : (aValue > bValue ? 1 : 0);
+        });
+      }
+      if (tab === 'messages') {
+        return [...data].sort((a, b) => {
+          if (a.status === 'Queued' && b.status !== 'Queued') return -1;
+          if (a.status !== 'Queued' && b.status === 'Queued') return 1;
+          const aTime = a.scheduledTime || '';
+          const bTime = b.scheduledTime || '';
+          return aTime < bTime ? -1 : (aTime > bTime ? 1 : 0);
+        });
+      }
+      return data;
+    }
     return [...data].sort((a, b) => {
       const aValue = a[sortConfig.key] === null ? '' : a[sortConfig.key];
       const bValue = b[sortConfig.key] === null ? '' : b[sortConfig.key];
@@ -163,7 +191,12 @@ export default function Admin() {
   };
 
   const SortIndicator = ({ tab, column }: { tab: string, column: string }) => {
-    if (!sortConfig || sortConfig.tab !== tab || sortConfig.key !== column) return null;
+    if (!sortConfig || sortConfig.tab !== tab) {
+      if (tab === 'loans' && column === 'due_date') return <ChevronUp className="w-3 h-3 inline ml-1 text-slate-400" />;
+      if (tab === 'messages' && column === 'scheduledTime') return <ChevronUp className="w-3 h-3 inline ml-1 text-slate-400" />;
+      return null;
+    }
+    if (sortConfig.key !== column) return null;
     return sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 inline ml-1" /> : <ChevronDown className="w-3 h-3 inline ml-1" />;
   };
 
@@ -186,6 +219,7 @@ export default function Admin() {
         setStatus(bookToEdit.status);
         setCategory(bookToEdit.category || '');
         setShelfNumber(bookToEdit.shelf_number || '');
+        setBookCode(bookToEdit.book_code || '');
         if (bookToEdit.isbn.startsWith('LIB-')) {
           setGeneratedBarcode(bookToEdit.isbn);
         } else {
@@ -200,6 +234,8 @@ export default function Admin() {
   const [backupError, setBackupError] = useState(false);
   const [showBackupWarning, setShowBackupWarning] = useState(false);
 
+  const [analyticsDays, setAnalyticsDays] = useState(30);
+
   useEffect(() => {
     if (isLoggedIn) {
       fetchLoans();
@@ -207,19 +243,25 @@ export default function Admin() {
       fetchSettings();
       fetchMembers();
       fetchMessages();
-      fetchAnalytics();
+      fetchAnalytics(analyticsDays);
     }
   }, [isLoggedIn]);
 
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = async (days: number = analyticsDays) => {
     try {
-      const res = await fetch('/api/admin/analytics');
+      const res = await fetch(`/api/admin/analytics?days=${days}`);
       const data = await res.json();
       setAnalytics(data);
     } catch (err) {
       console.error('Failed to fetch analytics', err);
     }
   };
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      fetchAnalytics(analyticsDays);
+    }
+  }, [analyticsDays]);
 
   const fetchMessages = async () => {
     try {
@@ -247,6 +289,7 @@ export default function Admin() {
       const data = await res.json();
       setSettings(data.settings);
       setGoogleConnected(data.googleConnected);
+      setRefreshToken(data.refreshToken);
 
       // Check last backup date
       const lastBackup = data.settings.find((s: any) => s.key === 'last_drive_backup')?.value;
@@ -413,7 +456,7 @@ export default function Admin() {
     }
   };
 
-  const handleScan = async (scannedIsbn: string) => {
+  const handleScan = async (scannedIsbn: string, fallbackData?: any) => {
     if (isProcessingScan.current) return;
 
     const clean = scannedIsbn.trim().replace(/[-\s]/g, '');
@@ -441,14 +484,14 @@ export default function Admin() {
     
     setIsbn(clean);
     // Use force=true to ensure it fetches even if it was the last one
-    await fetchBookDetails(clean, true);
+    await fetchBookDetails(clean, true, fallbackData);
 
     setTimeout(() => {
       isProcessingScan.current = false;
     }, 2000);
   };
 
-  const fetchBookDetails = async (targetIsbn: string, force = false) => {
+  const fetchBookDetails = async (targetIsbn: string, force = false, fallbackData?: any) => {
     const clean = targetIsbn.trim().replace(/[-\s]/g, '');
     if (!clean) return;
     
@@ -467,16 +510,25 @@ export default function Admin() {
         const data = await res.json();
         
         // Update UI with API data immediately
-        setTitle(data.title || '');
-        setAuthor(data.author || '');
-        setDescription(data.description || '');
-        setCoverUrl(data.cover_url || '');
-        setCategory(data.category || '');
+        const mergedData = {
+          ...data,
+          title: data.title || fallbackData?.title || '',
+          author: data.author || fallbackData?.author || '',
+          description: data.description || fallbackData?.description || '',
+          cover_url: data.cover_url || fallbackData?.cover_url || '',
+          category: data.category || fallbackData?.category || '',
+        };
+        
+        setTitle(mergedData.title);
+        setAuthor(mergedData.author);
+        setDescription(mergedData.description);
+        setCoverUrl(mergedData.cover_url);
+        setCategory(mergedData.category);
         
         setAddMessage({ type: 'info', text: 'Fetching additional details with AI...' });
         
         // Augment with AI only if data is missing
-        const augmentedData = await augmentBookDataWithAI(clean, data);
+        const augmentedData = await augmentBookDataWithAI(clean, mergedData);
         
         // Update UI with AI data, using a functional update to maintain previous state if AI returns nothing
         setTitle(prev => augmentedData.title || prev);
@@ -488,14 +540,23 @@ export default function Admin() {
         lastSuccessfulIsbn.current = clean;
         setAddMessage({ type: 'success', text: 'Book details found!' });
       } else {
-        // If 404 or other error
-        setAddMessage({ type: 'error', text: 'Could not find book details. Please enter manually.' });
-        // Don't clear fields, user might want to keep what they typed if they were editing
-        if (!editingBook) {
-           setTitle('');
-           setAuthor('');
-           setDescription('');
-           setCoverUrl('');
+        if (fallbackData && (fallbackData.title || fallbackData.author)) {
+          setTitle(fallbackData.title || '');
+          setAuthor(fallbackData.author || '');
+          setDescription(fallbackData.description || '');
+          setCategory(fallbackData.category || '');
+          setCoverUrl(fallbackData.cover_url || '');
+          setAddMessage({ type: 'success', text: 'Used extracted details from cover.' });
+        } else {
+          // If 404 or other error
+          setAddMessage({ type: 'error', text: 'Could not find book details. Please enter manually.' });
+          // Don't clear fields, user might want to keep what they typed if they were editing
+          if (!editingBook) {
+             setTitle('');
+             setAuthor('');
+             setDescription('');
+             setCoverUrl('');
+          }
         }
       }
 
@@ -573,11 +634,14 @@ export default function Admin() {
           total_copies: copies,
           status,
           category,
-          shelf_number: shelfNumber
+          shelf_number: shelfNumber,
+          featured,
+          book_code: bookCode
         })
       });
 
       if (res.ok) {
+        const data = await res.json();
         if (!editingBook) {
           setLastAddedBook({ title, cover: coverUrl });
           setShowSuccessModal(true);
@@ -590,7 +654,13 @@ export default function Admin() {
           setStatus('available');
           setCategory('');
           setShelfNumber('');
+          setBookCode('');
+          setFeatured(false);
           lastFetchedIsbn.current = '';
+          lastSuccessfulIsbn.current = '';
+          if (data.warning) {
+            setAddMessage({ type: 'info', text: data.message });
+          }
         } else {
           setAddMessage({ type: 'success', text: 'Book updated successfully!' });
           setTimeout(() => {
@@ -626,6 +696,8 @@ export default function Admin() {
     setStatus(book.status);
     setCategory(book.category || '');
     setShelfNumber(book.shelf_number || '');
+    setBookCode(book.book_code || '');
+    setFeatured(book.featured || false);
     setActiveTab('add');
     setAddMessage({ type: '', text: '' });
   };
@@ -882,46 +954,46 @@ export default function Admin() {
         </button>
       </div>
 
-      <div className="flex bg-slate-200/50 p-1 rounded-xl w-full max-w-lg">
+      <div className="flex overflow-x-auto bg-slate-200/50 p-1 rounded-xl w-full hide-scrollbar">
         <button 
           onClick={() => setActiveTab('loans')}
-          className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'loans' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`flex-1 min-w-max py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'loans' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
         >
-          Active Loans
+          Loans
         </button>
         <button 
           onClick={() => setActiveTab('catalogue')}
-          className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'catalogue' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`flex-1 min-w-max py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'catalogue' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
         >
           Catalogue
         </button>
         <button 
           onClick={() => setActiveTab('directory')}
-          className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'directory' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`flex-1 min-w-max py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'directory' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
         >
           Directory
         </button>
         <button 
           onClick={() => setActiveTab('backup')}
-          className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'backup' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`flex-1 min-w-max py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'backup' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
         >
           Backup
         </button>
         <button 
           onClick={() => setActiveTab('settings')}
-          className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'settings' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`flex-1 min-w-max py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'settings' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
         >
           Settings
         </button>
         <button 
           onClick={() => setActiveTab('messages')}
-          className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'messages' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`flex-1 min-w-max py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'messages' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
         >
           Messages
         </button>
         <button 
           onClick={() => setActiveTab('analytics')}
-          className={`flex-1 py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'analytics' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`flex-1 min-w-max py-2 px-4 rounded-lg font-medium text-sm transition-all ${activeTab === 'analytics' ? 'bg-white text-[#1a202c] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
         >
           Analytics
         </button>
@@ -929,6 +1001,22 @@ export default function Admin() {
 
       {activeTab === 'loans' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+            <h3 className="font-bold text-slate-900">Library Loans</h3>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <span className="text-sm font-medium text-slate-600">Show Returned</span>
+              <div className="relative">
+                <input 
+                  type="checkbox" 
+                  className="sr-only" 
+                  checked={showReturnedLoans}
+                  onChange={(e) => setShowReturnedLoans(e.target.checked)}
+                />
+                <div className={`block w-10 h-6 rounded-full transition-colors ${showReturnedLoans ? 'bg-[#1a202c]' : 'bg-slate-300'}`}></div>
+                <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${showReturnedLoans ? 'transform translate-x-4' : ''}`}></div>
+              </div>
+            </label>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -951,12 +1039,12 @@ export default function Admin() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {loans.length === 0 ? (
+                {loans.filter(l => showReturnedLoans || !l.return_date).length === 0 ? (
                   <tr>
                     <td colSpan={5} className="p-8 text-center text-slate-500">No loans found.</td>
                   </tr>
                 ) : (
-                  getSortedData(loans, 'loans').map(loan => {
+                  getSortedData(loans.filter(l => showReturnedLoans || !l.return_date), 'loans').map(loan => {
                     const book = books.find(b => b.isbn === loan.isbn);
                     return (
                       <tr key={loan.id} className={`hover:bg-slate-50/50 transition-colors ${book ? 'cursor-pointer' : ''}`} onClick={() => book && handleEdit(book)}>
@@ -972,7 +1060,14 @@ export default function Admin() {
                           {new Date(loan.borrow_date).toLocaleDateString('en-AU')}
                         </td>
                         <td className="p-4 text-sm text-slate-600">
-                          {new Date(loan.due_date).toLocaleDateString('en-AU')}
+                          {loan.original_due_date && new Date(loan.original_due_date).toLocaleDateString('en-AU') !== new Date(loan.due_date).toLocaleDateString('en-AU') ? (
+                            <div className="flex flex-col">
+                              <span className="line-through text-slate-400 text-xs">{new Date(loan.original_due_date).toLocaleDateString('en-AU')}</span>
+                              <span className="font-medium text-emerald-600">{new Date(loan.due_date).toLocaleDateString('en-AU')}</span>
+                            </div>
+                          ) : (
+                            <span>{new Date(loan.due_date).toLocaleDateString('en-AU')}</span>
+                          )}
                         </td>
                         <td className="p-4">
                           {loan.return_date ? (
@@ -1119,10 +1214,18 @@ export default function Admin() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100 text-xs uppercase tracking-wider text-slate-500">
-                  <th className="p-4 font-medium">Scheduled Time</th>
-                  <th className="p-4 font-medium">Recipient</th>
-                  <th className="p-4 font-medium">Message</th>
-                  <th className="p-4 font-medium">Status</th>
+                  <th className="p-4 font-medium cursor-pointer hover:text-slate-900" onClick={() => handleSort('messages', 'scheduledTime')}>
+                    Scheduled Time <SortIndicator tab="messages" column="scheduledTime" />
+                  </th>
+                  <th className="p-4 font-medium cursor-pointer hover:text-slate-900" onClick={() => handleSort('messages', 'firstName')}>
+                    Recipient <SortIndicator tab="messages" column="firstName" />
+                  </th>
+                  <th className="p-4 font-medium cursor-pointer hover:text-slate-900" onClick={() => handleSort('messages', 'message')}>
+                    Message <SortIndicator tab="messages" column="message" />
+                  </th>
+                  <th className="p-4 font-medium cursor-pointer hover:text-slate-900" onClick={() => handleSort('messages', 'status')}>
+                    Status <SortIndicator tab="messages" column="status" />
+                  </th>
                   <th className="p-4 font-medium text-right">Actions</th>
                 </tr>
               </thead>
@@ -1132,7 +1235,7 @@ export default function Admin() {
                     <td colSpan={5} className="p-8 text-center text-slate-500">No messages found.</td>
                   </tr>
                 ) : (
-                  messages.map(msg => (
+                  getSortedData(messages, 'messages').map(msg => (
                     <tr key={msg.rowIndex} className="hover:bg-slate-50/50 transition-colors">
                       <td className="p-4 text-sm font-medium text-slate-900 whitespace-nowrap">
                         {msg.scheduledTime}
@@ -1317,6 +1420,28 @@ export default function Admin() {
                         <p className="text-xs text-slate-400">
                           Last saved: {new Date(settings.find(s => s.key === 'last_drive_backup')?.value || '').toLocaleString()}
                         </p>
+                      )}
+                      {refreshToken && (
+                        <div className="mt-4 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                          <p className="text-xs text-amber-800 font-medium mb-2">
+                            To ensure backups persist across server restarts, add this as an environment variable named <code className="bg-amber-100 px-1 py-0.5 rounded">GOOGLE_REFRESH_TOKEN</code>:
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <code className="text-[10px] bg-white px-2 py-1 rounded border border-amber-200 flex-1 overflow-x-auto whitespace-nowrap text-slate-600">
+                              {refreshToken}
+                            </code>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(refreshToken);
+                                alert('Copied to clipboard!');
+                              }}
+                              className="p-1.5 bg-white border border-amber-200 rounded text-amber-700 hover:bg-amber-100 transition-colors"
+                              title="Copy to clipboard"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                          </div>
+                        </div>
                       )}
                       <button 
                         onClick={handleDriveBackup}
@@ -1522,13 +1647,25 @@ export default function Admin() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Borrowing Trends */}
             <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-              <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-indigo-500" />
-                Borrowing Trends (Last 30 Days)
-              </h3>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-indigo-500" />
+                  Borrowing Trends
+                </h3>
+                <select 
+                  value={analyticsDays}
+                  onChange={(e) => setAnalyticsDays(Number(e.target.value))}
+                  className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-2"
+                >
+                  <option value={7}>Last 7 Days</option>
+                  <option value={30}>Last 30 Days</option>
+                  <option value={90}>Last 90 Days</option>
+                  <option value={365}>Last Year</option>
+                </select>
+              </div>
               <div className="h-[300px] w-full min-h-[300px] min-w-[0]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={analytics.borrowsOverTime || []}>
+                  <ComposedChart data={analytics.borrowsOverTime || []}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis 
                       dataKey="date" 
@@ -1537,23 +1674,35 @@ export default function Admin() {
                       tick={{ fontSize: 10, fill: '#94a3b8' }}
                       tickFormatter={(str) => {
                         const date = new Date(str);
-                        return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+                        return `Week of ${date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`;
                       }}
                     />
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
                     <Tooltip 
                       contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                       labelStyle={{ fontWeight: 'bold', marginBottom: '4px' }}
+                      cursor={{ fill: '#f8fafc' }}
+                      labelFormatter={(label) => {
+                        const date = new Date(label as string);
+                        return `Week starting ${date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+                      }}
+                    />
+                    <Bar 
+                      dataKey="count" 
+                      name="Borrows"
+                      fill="#1a202c" 
+                      radius={[4, 4, 0, 0]}
                     />
                     <Line 
                       type="monotone" 
                       dataKey="count" 
-                      stroke="#1a202c" 
-                      strokeWidth={3} 
-                      dot={{ r: 4, fill: '#1a202c', strokeWidth: 2, stroke: '#fff' }}
-                      activeDot={{ r: 6, strokeWidth: 0 }}
+                      name="Trend"
+                      stroke="#4f46e5" 
+                      strokeWidth={2} 
+                      dot={false}
+                      activeDot={{ r: 6 }}
                     />
-                  </LineChart>
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
             </div>
@@ -1561,34 +1710,51 @@ export default function Admin() {
             {/* Category Distribution */}
             <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
               <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
-                <PieChart className="w-5 h-5 text-emerald-500" />
+                <PieChartIcon className="w-5 h-5 text-emerald-500" />
                 Category Distribution
               </h3>
-              <div className="h-[300px] w-full min-h-[300px] min-w-[0]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={analytics.categoryStats || []}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={80}
-                      paddingAngle={5}
-                      dataKey="count"
-                      nameKey="category"
-                    >
-                      {(analytics.categoryStats || []).map((entry: any, index: number) => (
-                        <Cell key={`cell-${index}`} fill={[
-                          '#1a202c', '#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
-                        ][index % 7]} />
-                      ))}
-                    </Pie>
-                    <Tooltip 
-                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                    />
-                    <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                  </PieChart>
-                </ResponsiveContainer>
+              <div className="h-[300px] w-full min-h-[300px] min-w-[0] flex flex-col sm:flex-row items-center justify-center">
+                <div className="w-full sm:w-1/2 h-[200px] sm:h-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={analytics.categoryStats || []}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={5}
+                        dataKey="count"
+                        nameKey="category"
+                      >
+                        {(analytics.categoryStats || []).map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={[
+                            '#1a202c', '#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
+                          ][index % 7]} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="w-full sm:w-1/2 mt-4 sm:mt-0 max-h-[200px] sm:max-h-[300px] overflow-y-auto hide-scrollbar pl-0 sm:pl-4">
+                  <ul className="space-y-2">
+                    {(analytics.categoryStats || []).map((entry: any, index: number) => (
+                      <li key={index} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <span 
+                            className="w-3 h-3 rounded-full flex-shrink-0" 
+                            style={{ backgroundColor: ['#1a202c', '#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'][index % 7] }}
+                          ></span>
+                          <span className="text-slate-700 truncate" title={entry.category}>{entry.category}</span>
+                        </div>
+                        <span className="font-bold text-slate-900 ml-2">{entry.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             </div>
           </div>
@@ -1631,13 +1797,49 @@ export default function Admin() {
                 <p className="text-center text-slate-500 text-sm mt-4">Point camera at ISBN barcode</p>
               </div>
             ) : (
-              <button 
-                onClick={() => setScanning(true)}
-                className="w-full bg-slate-50 border-2 border-dashed border-slate-300 text-slate-600 py-8 rounded-2xl hover:border-[#1a202c] hover:text-[#1a202c] transition-colors flex flex-col items-center justify-center gap-2 mb-8"
-              >
-                <ScanLine className="w-8 h-8" />
-                <span className="font-medium">Scan ISBN Barcode</span>
-              </button>
+              <div className="grid grid-cols-2 gap-4 mb-8">
+                <button 
+                  onClick={() => setScanning(true)}
+                  className="w-full bg-slate-50 border-2 border-dashed border-slate-300 text-slate-600 py-6 rounded-2xl hover:border-[#1a202c] hover:text-[#1a202c] transition-colors flex flex-col items-center justify-center gap-2"
+                >
+                  <ScanLine className="w-6 h-6" />
+                  <span className="font-medium text-sm">Scan Barcode</span>
+                </button>
+                <CoverScanner 
+                  mode="identify"
+                  variant="large"
+                  onResult={(result) => {
+                    let validIsbn = '';
+                    if (result.isbn) {
+                      const isbnStr = String(result.isbn);
+                      const digits = isbnStr.replace(/\D/g, '');
+                      if (digits.length === 10 || digits.length === 13) {
+                        validIsbn = digits;
+                      } else {
+                        const clean = isbnStr.trim().replace(/[-\s]/g, '');
+                        if (clean.startsWith('LIB-')) {
+                          validIsbn = clean;
+                        }
+                      }
+                    }
+                    
+                    if (validIsbn) {
+                      handleScan(validIsbn, result);
+                    } else if (result.title || result.author) {
+                      setTitle(result.title || '');
+                      setAuthor(result.author || '');
+                      if (result.description) setDescription(result.description);
+                      if (result.category) setCategory(result.category);
+                      if (result.cover_url) setCoverUrl(result.cover_url);
+                      setAddMessage({ type: 'success', text: 'Extracted details from cover.' });
+                    } else {
+                      setAddMessage({ type: 'error', text: 'Could not extract details from cover.' });
+                    }
+                  }}
+                  onError={(err) => setAddMessage({ type: 'error', text: err })}
+                  className="h-full"
+                />
+              </div>
             )
           )}
 
@@ -1683,11 +1885,10 @@ export default function Admin() {
                   <div className="relative flex-1">
                     <input 
                       type="text" 
-                      required
                       value={isbn}
                       onChange={e => setIsbn(e.target.value)}
                       className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#1a202c] bg-slate-50 focus:bg-white transition-colors font-mono pr-10"
-                      placeholder="e.g. 9780123456789"
+                      placeholder="e.g. 9780123456789 (Optional)"
                     />
                     {isbn && (
                       <button
@@ -1877,6 +2078,30 @@ export default function Admin() {
                 />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Book Code (Optional)</label>
+                <input 
+                  type="text" 
+                  value={bookCode}
+                  onChange={e => setBookCode(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#1a202c] bg-slate-50 focus:bg-white transition-colors"
+                  placeholder="e.g. LIB-001"
+                />
+              </div>
+              
+              <div className="flex items-center mt-8">
+                <input
+                  type="checkbox"
+                  id="featured"
+                  checked={featured}
+                  onChange={e => setFeatured(e.target.checked)}
+                  className="h-4 w-4 text-[#1a202c] focus:ring-[#1a202c] border-slate-300 rounded"
+                />
+                <label htmlFor="featured" className="ml-2 block text-sm text-slate-900 font-medium">
+                  Featured Book
+                </label>
+              </div>
+
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
                   Book Description (Optional)
@@ -2013,6 +2238,19 @@ export default function Admin() {
                 onClick={() => {
                   setShowSuccessModal(false);
                   setLastAddedBook(null);
+                  setIsbn('');
+                  setTitle('');
+                  setAuthor('');
+                  setDescription('');
+                  setCoverUrl('');
+                  setCopies(1);
+                  setStatus('available');
+                  setCategory('');
+                  setShelfNumber('');
+                  setBookCode('');
+                  setFeatured(false);
+                  lastFetchedIsbn.current = '';
+                  lastSuccessfulIsbn.current = '';
                 }}
                 className="w-full py-3 bg-[#1a202c] hover:bg-slate-800 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
               >

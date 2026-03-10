@@ -15,6 +15,8 @@ interface Book {
   status: string;
   category: string | null;
   shelf_number: string | null;
+  featured: boolean;
+  book_code: string | null;
   next_due_date: string | null;
 }
 
@@ -130,10 +132,12 @@ export default function Home() {
     return sortOrder === 'asc' ? <ChevronUp className="w-3 h-3 inline ml-1" /> : <ChevronDown className="w-3 h-3 inline ml-1" />;
   };
 
+  const featuredBooks = books.filter(b => b.featured && b.status !== 'archived');
+
   return (
     <div className="space-y-8">
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 relative z-0">
         <Link 
           to="/borrow" 
           className="group relative overflow-hidden bg-[#1a202c] text-white p-6 rounded-3xl shadow-lg hover:shadow-xl transition-all hover:-translate-y-1"
@@ -166,6 +170,59 @@ export default function Home() {
           <div className="absolute -right-4 -bottom-4 w-32 h-32 bg-slate-100/50 rounded-full blur-2xl group-hover:bg-slate-200/50 transition-colors"></div>
         </Link>
       </div>
+
+      {featuredBooks.length > 0 && !search && filterCategory === 'All' && filterStatus === 'all' && (
+        <div className="pt-4 border-t border-slate-100">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-2xl font-bold text-[#1a202c]">Featured Books</h2>
+              <p className="text-slate-500 text-sm">Handpicked recommendations for you</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+            {featuredBooks.map(book => (
+              <div 
+                key={`featured-${book.id}`}
+                onClick={() => setSelectedBook(book)}
+                className="group bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-xl transition-all hover:-translate-y-1 cursor-pointer flex flex-col"
+              >
+                <div className="aspect-[2/3] bg-slate-100 relative overflow-hidden">
+                  {book.cover_url ? (
+                    <img 
+                      src={book.cover_url} 
+                      alt={book.title} 
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-slate-300">
+                      <BookIcon className="w-12 h-12" />
+                    </div>
+                  )}
+                  <div className="absolute top-2 right-2 flex flex-col gap-1">
+                    <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider shadow-sm backdrop-blur-md ${
+                      book.available_copies > 0 
+                        ? 'bg-emerald-500/90 text-white' 
+                        : 'bg-amber-500/90 text-white'
+                    }`}>
+                      {book.available_copies > 0 ? 'Available' : 'Borrowed'}
+                    </span>
+                    {book.shelf_number && (
+                      <span className="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider shadow-sm backdrop-blur-md bg-slate-900/90 text-white">
+                        Shelf {book.shelf_number}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="p-4 flex-1 flex flex-col">
+                  <h3 className="font-bold text-slate-900 line-clamp-2 mb-1 group-hover:text-blue-600 transition-colors">{book.title}</h3>
+                  <p className="text-sm text-slate-500 line-clamp-1 mb-3">{book.author}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-6 pt-4 border-t border-slate-100">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -280,8 +337,13 @@ export default function Home() {
               <div className="p-4 flex-1 flex flex-col">
                 <h3 className="font-bold text-slate-900 line-clamp-2 leading-tight mb-1">{book.title}</h3>
                 <p className="text-sm text-slate-500 line-clamp-1 mb-2">{book.author || 'Unknown Author'}</p>
-                <div className="mt-auto pt-2 border-t border-slate-50">
+                <div className="mt-auto pt-2 border-t border-slate-50 flex justify-between items-center">
                   <p className="text-[10px] text-slate-400 font-mono">ISBN: {book.isbn}</p>
+                  {book.shelf_number && (
+                    <span className="px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600">
+                      Shelf {book.shelf_number}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

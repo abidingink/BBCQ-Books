@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import Scanner from '../components/Scanner';
+import BookSearch from '../components/BookSearch';
+import CoverScanner from '../components/CoverScanner';
 import { ScanLine, Trash2, CheckCircle2, User, Phone, CalendarClock, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -13,9 +15,9 @@ interface ScannedBook {
 export default function Borrow() {
   const [scanning, setScanning] = useState(false);
   const [scannedBooks, setScannedBooks] = useState<ScannedBook[]>([]);
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
+  const [name, setName] = useState(() => localStorage.getItem('library_user_name') || '');
+  const [phone, setPhone] = useState(() => localStorage.getItem('library_user_phone') || '');
+  const [email, setEmail] = useState(() => localStorage.getItem('library_user_email') || '');
   const [weeks, setWeeks] = useState(2);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -32,6 +34,8 @@ export default function Borrow() {
     }
   }, [searchParams]);
 
+  const [isNameFocused, setIsNameFocused] = useState(false);
+
   useEffect(() => {
     if (name.length >= 2) {
       const timer = setTimeout(() => {
@@ -39,7 +43,9 @@ export default function Borrow() {
           .then(res => res.json())
           .then(data => {
             setSuggestions(data);
-            setShowSuggestions(data.length > 0);
+            if (isNameFocused) {
+              setShowSuggestions(data.length > 0);
+            }
           })
           .catch(console.error);
       }, 300);
@@ -48,7 +54,7 @@ export default function Borrow() {
       setSuggestions([]);
       setShowSuggestions(false);
     }
-  }, [name]);
+  }, [name, isNameFocused]);
 
   const selectMember = (member: any) => {
     setName(member.full_name);
@@ -117,12 +123,14 @@ export default function Borrow() {
       const data = await res.json();
 
       if (res.ok) {
+        localStorage.setItem('library_user_name', name);
+        localStorage.setItem('library_user_phone', phone);
+        localStorage.setItem('library_user_email', email);
+        
         setSuccess(true);
         setScannedBooks([]);
         addedIsbnsRef.current.clear();
-        setName('');
-        setPhone('');
-        setEmail('');
+        // We don't clear the user details anymore so they are ready for next time
       } else {
         setError(data.error || 'Failed to borrow books.');
       }
@@ -184,15 +192,52 @@ export default function Borrow() {
           <p className="text-center text-white/70 text-sm mt-4">Point camera at ISBN barcode</p>
         </div>
       ) : (
-        <button 
-          onClick={() => setScanning(true)}
-          className="w-full bg-white border-2 border-dashed border-slate-300 text-slate-600 py-12 rounded-3xl hover:border-[#1a202c] hover:text-[#1a202c] transition-colors flex flex-col items-center justify-center gap-3 group"
-        >
-          <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center group-hover:bg-slate-100 transition-colors">
-            <ScanLine className="w-8 h-8" />
+        <div className="space-y-4">
+          <BookSearch 
+            onSelect={(book) => {
+              if (!addedIsbnsRef.current.has(book.isbn)) {
+                addedIsbnsRef.current.add(book.isbn);
+                setScannedBooks(prev => [...prev, book]);
+              }
+            }}
+            filter="available"
+          />
+          
+          <div className="grid grid-cols-2 gap-4">
+            <button 
+              onClick={() => setScanning(true)}
+              className="w-full bg-white border-2 border-dashed border-slate-300 text-slate-600 py-6 rounded-2xl hover:border-[#1a202c] hover:text-[#1a202c] transition-colors flex flex-col items-center justify-center gap-2 group"
+            >
+              <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center group-hover:bg-slate-100 transition-colors">
+                <ScanLine className="w-6 h-6" />
+              </div>
+              <span className="font-medium text-sm">Scan Barcode</span>
+            </button>
+            
+            <CoverScanner 
+              mode="match"
+              variant="large"
+              onResult={(result) => {
+                if (result.match && result.book) {
+                  const book = result.book;
+                  if (book.status !== 'available') {
+                    setError(`Book "${book.title}" is currently marked as ${book.status}.`);
+                  } else if (book.available_copies <= 0) {
+                    setError(`All copies of "${book.title}" are currently borrowed.`);
+                  } else if (!addedIsbnsRef.current.has(book.isbn)) {
+                    addedIsbnsRef.current.add(book.isbn);
+                    setScannedBooks(prev => [...prev, book]);
+                    setError('');
+                  }
+                } else {
+                  setError('Could not identify book from cover. Try scanning barcode or searching manually.');
+                }
+              }}
+              onError={(err) => setError(err)}
+              className="h-full"
+            />
           </div>
-          <span className="font-medium text-lg">Tap to Scan Barcode</span>
-        </button>
+        </div>
       )}
 
       {scannedBooks.length > 0 && (
@@ -221,7 +266,10 @@ export default function Borrow() {
       )}
 
       <form onSubmit={handleBorrow} className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 space-y-5">
-        <h3 className="font-bold text-slate-900 border-b border-slate-100 pb-4 mb-4">Your Details</h3>
+        <div className="flex justify-between items-center border-b border-slate-100 pb-4 mb-4">
+          <h3 className="font-bold text-slate-900">Your Details</h3>
+          <p className="text-[10px] text-slate-400 font-medium bg-slate-50 px-2 py-1 rounded-md">Saved on device</p>
+        </div>
         
         <div className="space-y-4">
           <div>
@@ -233,7 +281,15 @@ export default function Borrow() {
                 required
                 value={name}
                 onChange={e => setName(e.target.value)}
-                onFocus={() => name.length >= 2 && setShowSuggestions(suggestions.length > 0)}
+                onFocus={() => {
+                  setIsNameFocused(true);
+                  if (name.length >= 2 && suggestions.length > 0) setShowSuggestions(true);
+                }}
+                onBlur={() => {
+                  // Delay hiding suggestions so clicks on them register
+                  setTimeout(() => setIsNameFocused(false), 200);
+                  setTimeout(() => setShowSuggestions(false), 200);
+                }}
                 className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#1a202c] bg-slate-50 focus:bg-white transition-colors"
                 placeholder="John Doe"
               />

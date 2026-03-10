@@ -63,17 +63,63 @@ function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const [needsApiKey, setNeedsApiKey] = React.useState(false);
+
   React.useEffect(() => {
     async function checkApiKey() {
       if (typeof window !== 'undefined' && (window as any).aistudio) {
         const hasKey = await (window as any).aistudio.hasSelectedApiKey();
         console.log("Has API key:", hasKey);
+        if (!hasKey) {
+          setNeedsApiKey(true);
+        }
       } else {
         console.log("aistudio not found");
       }
     }
     checkApiKey();
+
+    // Trigger a sync from Google Drive on page load
+    // This ensures the app loads the latest backup without requiring admin login
+    fetch('/api/sync-from-drive', { method: 'POST' })
+      .then(res => res.json())
+      .then(data => console.log('Sync on load:', data))
+      .catch(err => console.error('Failed to sync on load:', err));
   }, []);
+
+  const handleSelectKey = async () => {
+    if (typeof window !== 'undefined' && (window as any).aistudio) {
+      await (window as any).aistudio.openSelectKey();
+      const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+      if (hasKey) {
+        setNeedsApiKey(false);
+      }
+    }
+  };
+
+  if (needsApiKey) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-lg max-w-md w-full text-center">
+          <h2 className="text-2xl font-bold text-slate-900 mb-4">API Key Required</h2>
+          <p className="text-slate-600 mb-6">
+            This application requires a Gemini API key to function. Please select your API key to continue.
+            <br/><br/>
+            <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">
+              Learn more about billing
+            </a>
+          </p>
+          <button
+            onClick={handleSelectKey}
+            className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition-colors"
+          >
+            Select API Key
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <BrowserRouter>
       <Layout>
